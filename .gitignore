@@ -1,0 +1,18 @@
+# Ignorar entornos virtuales de Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Ignorar carpetas de compilación de C++
+build/
+bin/
+obj/
+
+# Ignorar ejecutables y librerías compartidas compiladas
+main_server
+worker
+*.so
+*.o
+*.a
+*.out
