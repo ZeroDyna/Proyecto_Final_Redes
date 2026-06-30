@@ -6,7 +6,7 @@
 #include <sys/socket.h>    
 #include <netinet/in.h>    
 #include <arpa/inet.h>     
-#include <unistd.h>        
+#include <unistd.h>      
 
 uint32_t ucsp_crc32(const uint8_t* data, size_t len) {
     return (uint32_t)crc32(0L, data, len);
@@ -74,6 +74,8 @@ static int send_fragments(int sock, const uint8_t* data, size_t total_bytes,
                           struct sockaddr_in* dest, socklen_t dest_len) {
 
     uint16_t total_frags = (uint16_t)((total_bytes + UCSP_MAX_PAYLOAD - 1) / UCSP_MAX_PAYLOAD);
+    // para datagram corrupto, corrompe el fragmento 3
+    static bool ya_corrompi = false;
 
     for (uint16_t i = 0; i < total_frags; i++) {
 
@@ -91,6 +93,14 @@ static int send_fragments(int sock, const uint8_t* data, size_t total_bytes,
                                total_frags, i,
                                data + offset, (uint16_t)chunk_size);
 
+            // datagram corrupto
+            if (!ya_corrompi && i == 3) {
+                uint8_t original = dg.payload[66];
+                dg.payload[66] = 0;
+                printf("[SIMULACION] Corrompiendo payload[66] del frag %d: %d -> 0\n",
+                       i, original);
+                ya_corrompi = true;
+            }
             /*
             // print solo el primero y el último
             if (i == 0 || i == total_frags - 1) {
