@@ -54,7 +54,7 @@ void softmax(const vector<float>& logits, vector<float>& probs) {
 void mi_callback(float* buffer, size_t n, float* result_out) {
     cout << "[WORKER] Buffer recibido con " << n << " floats" << endl;
 
-    // Simulación de timeout
+    // Simulacion de timeout
     /*
     if (WORKER_PORT == 9003) {
         cout << "[WORKER] Simulando timeout solo en worker 9003..." << endl;
