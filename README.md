@@ -1,20 +1,23 @@
-# Proyecto Final
+# Proyecto Final Redes y Comunicacion
 
-## Red de flujo
+Entrenamiento de una red neuronal en PyTorch donde el cálculo del gradiente se
+distribuye entre varios workers en C++ usando un protocolo propio sobre UDP
+(stop-and-wait, con ACK/NACK/timeout y CRC32).
 
 ```
 Python (red neuronal)
      │
      │  extrae matrices de pesos
      ▼
-Main (C++)  ──────────────────────────────────────────────────
-     │                                                        │
-     ├──► Worker 1: batch [a,b,c] → calcula ∇L₁             │
-     ├──► Worker 2: batch [d,e,f] → calcula ∇L₂             │ via UDP + RDT
-     └──► Worker 3: batch [g,h,i] → calcula ∇L₃             │
-                         │                                    │
-                         ▼                                    │
-              ∇L_avg = (∇L₁ + ∇L₂ + ∇L₃) / 3 ◄─────────────
+distributed_trainer.py ────────────────────────────────────────
+     │                                                          │
+     ├──► Worker 1 (puerto 9001): batch 1 → ∇L₁                │
+     ├──► Worker 2 (puerto 9002): batch 2 → ∇L₂                │ vía UDP + RDT (ucsp)
+     ├──► Worker 3 (puerto 9003): batch 3 → ∇L₃                │
+     └──► Worker 4 (puerto 9004): batch 4 → ∇L₄                │
+                         │                                      │
+                         ▼                                      │
+              ∇L_avg = (∇L₁+∇L₂+∇L₃+∇L₄) / 4 ◄──────────────────
                          │
                          ▼
               Python actualiza pesos: W ← W − η · ∇L_avg
@@ -22,150 +25,123 @@ Main (C++)  ──────────────────────�
 
 ---
 
-## ¿Qué hace cada integrante?
+## Estructura del repo
 
-### Fabian — `ucsp.cpp` (LISTO)
-
-Implementó la librería de transporte. Esta librería no sabe nada de redes neuronales,
-solo sabe mover `float*` de un lado al otro con confiabilidad.
-
-Funciones principales:
-- `ucsp_send_data(...)` — envía un buffer a un worker y espera el resultado
-- `ucsp_distribute(...)` — envía a todos los workers y promedia los gradientes
-- `ucsp_listen(...)` — loop del worker esperando datos del Main
-
-Características del protocolo:
-- Datagramas de exactamente **500 bytes**
-- **CRC32** para detectar corrupción
-- **ACK / NACK / Timeout** para garantizar entrega (RDT)
-- **Network Byte Order** (htons/htonl) para compatibilidad entre máquinas
+| Archivo                  | Qué es |
+|---------------------------|--------|
+| `ucsp.cpp` / `ucsp.hpp`   | Librería de transporte (UDP + RDT 3.0). No sabe nada de redes neuronales, solo mueve `float*` de forma confiable. Acá vive `ucsp_distribute`, el core real del proyecto. |
+| `worker.cpp`              | Proceso esclavo: recibe pesos + batch, hace forward + backprop, devuelve gradientes. Se compila como binario independiente (`./worker`). |
+| `bindings.cpp`            | Expone `ucsp_distribute` a Python vía pybind11 (`import ucsp`). |
+| `nn_config.hpp`           | Dimensiones de la red y offsets del buffer serializado. |
+| `distributed_trainer.py`  | Script de entrenamiento. Define la lista de workers, llama a `ucsp.distribute(...)`. |
+| `basicClasificacion.py`   | Versión sin distribuir (entrenamiento local), de referencia. |
+| `setup.py`                | Build de los bindings de Python (`ucsp.so`). |
 
 ---
 
-### Integrante 2 — `main_server.cpp`
+## Requisitos previos
 
-Es el coordinador. Recibe las matrices de Python, arma los buffers para cada worker y llama a `ucsp_distribute`.
+- **g++** con soporte C++17
+- **zlib** (`-lz`, usado para el CRC32)
+- **Python 3.9+** (probado también en 3.12 y 3.14)
+- Paquetes de Python:
+  ```bash
+  pip install pybind11 torch numpy pandas matplotlib scikit-learn --break-system-packages
+  ```
 
-Lo que debe hacer:
-1. Recibir del lado Python: las matrices de pesos y el batch actual
-2. Para cada worker, construir su buffer de entrada:
-   ```
-   buffer_worker_i = [model_params (12454 floats)] + [batch_i (tamaño variable)]
-   ```
-3. Llamar a `ucsp_distribute(...)` con esos buffers
-4. Devolver `gradient_avg` a Python para que actualice los pesos
-
-Archivos que necesita incluir:
-```cpp
-#include "ucsp.hpp"
-#include "nn_config.hpp"
-```
+> En distros como Arch, `pip install` fuera de un venv requiere `--break-system-packages`
+> (o usar un entorno virtual: `python -m venv venv && source venv/bin/activate`).
 
 ---
 
-### Integrante 3 — `worker.cpp`
+## Compilación
 
-Es el esclavo. Recibe un buffer con los pesos del modelo + su batch, hace el forward pass
-completo con backpropagation y devuelve los gradientes.
+### 1. El binario del worker
 
-Lo que debe hacer:
-1. Llamar a `ucsp_listen(port, elementos_a_recibir, elementos_a_devolver, mi_callback)`
-2. Implementar `mi_callback(float* buffer, size_t n, float* result_out)` que:
-   - Desempaqueta el buffer usando los offsets de `nn_config.hpp`
-   - Corre forward pass por las 4 capas
-   - Corre backpropagation
-   - Escribe los gradientes en `result_out`
+Es el mismo binario para todos los workers — solo cambia el puerto al ejecutarlo:
 
-Cómo desempacar el buffer (usar `nn_config.hpp`):
-```cpp
-float* w1    = buffer + OFFSET_W1;
-float* b1    = buffer + OFFSET_B1;
-float* w2    = buffer + OFFSET_W2;
-// ... etc
-// el batch viene después de todos los parámetros del modelo
-float* batch = buffer + TOTAL_MODEL_PARAMS;
+```bash
+g++ -std=c++17 -O2 -o worker worker.cpp ucsp.cpp -lz
 ```
 
-Archivos que necesita incluir:
-```cpp
-#include "ucsp.hpp"
-#include "nn_config.hpp"
+### 2. El módulo de Python (`ucsp`)
+
+```bash
+python3 setup.py build_ext --inplace
+```
+
+Esto genera un archivo `ucsp.cpython-<version>-<arch>.so` en la carpeta del proyecto.
+Es lo que importa `distributed_trainer.py` con `import ucsp`. El warning de
+`sign-compare` al compilar es inofensivo, se puede ignorar.
+
+Verificá que cargó bien:
+
+```bash
+python3 -c "import ucsp; print(ucsp.TOTAL_MODEL_PARAMS)"
+# debe imprimir: 12454
 ```
 
 ---
 
-### Integrante 4 — `bindings.cpp` + `distributed_trainer.py`
+## Cómo correr el proyecto (5 terminales)
 
-Es el integrador. Conecta Python con C++ usando pybind11 para que Python pueda
-llamar a `ucsp_distribute` como si fuera una función Python normal.
+```bash
+# Terminales 1-4 — un worker por puerto
+./worker 9001 16
+./worker 9002 16
+./worker 9003 16
+./worker 9004 16
 
-`bindings.cpp` debe exponer:
-```cpp
-// Python llamará esto como: ucsp.distribute(model_buffer, batch_list, workers)
-m.def("distribute", &ucsp_distribute_wrapper, "Distribuye y promedia gradientes");
+# Terminal 5 — entrenamiento
+python3 distributed_trainer.py
 ```
 
-`distributed_trainer.py` modifica `basicClasificacion.py` para que en el loop
-de entrenamiento, en lugar de hacer `optimizer.step()` localmente, llame a ucsp:
+El segundo argumento de `./worker` (`16`) es `SAMPLES_PER_WORKER` y debe coincidir
+con el valor de `S` definido en `distributed_trainer.py`.
+
+---
+
+## ¿Se pueden agregar más workers?
+
+Sí. La cantidad de workers no está hardcodeada en el protocolo — `ucsp_distribute`
+recibe `n_workers` como parámetro y todo se ajusta solo. Lo único que define que
+sean 4 hoy es esta lista en `distributed_trainer.py`:
+
 ```python
-import ucsp  # la librería compilada
-
-# Extraer pesos como numpy float32
-model_buffer = extraer_pesos(model)
-
-# Distribuir y recibir gradientes promediados
-grad_avg = ucsp.distribute(model_buffer, batch_chunks, workers)
-
-# Actualizar pesos en Python
-actualizar_pesos(model, grad_avg)
+WORKERS = [
+    ("127.0.0.1", 9001),
+    ("127.0.0.1", 9002),
+    ("127.0.0.1", 9003),
+    ("127.0.0.1", 9004),
+]
 ```
 
-### Guía para compilar los bindings:
-```bash
-pip install pybind11
-python setup.py build_ext --inplace
-```
+Para agregar un worker más:
+
+1. Sumá una tupla a `WORKERS`, ej. `("127.0.0.1", 9005)`.
+2. Levantá una terminal extra: `./worker 9005 16`.
+
+`N = len(WORKERS)` y `batchsize = (N + 1) * S` se recalculan automáticamente.
 
 ---
 
-## Constantes importantes (nn_config.hpp)
+## Constantes de la red (`nn_config.hpp`)
 
-| Constante           | Valor  | Descripción              |
-|---------------------|--------|--------------------------|
-| `TOTAL_MODEL_PARAMS`| 12454  | floats totales del modelo |
-| `INPUT_DIM`         | 14     | entradas de la red        |
-| `HIDDEN1`           | 128    | neuronas capa 1           |
-| `HIDDEN2`           | 64     | neuronas capa 2           |
-| `HIDDEN3`           | 32     | neuronas capa 3           |
-| `NUM_CLASSES`       | 3      | salidas de la red         |
+| Constante            | Valor | Descripción                |
+|-----------------------|-------|-----------------------------|
+| `TOTAL_MODEL_PARAMS`  | 12454 | floats totales del modelo   |
+| `INPUT_DIM`           | 14    | entradas de la red          |
+| `HIDDEN1`             | 128   | neuronas capa 1             |
+| `HIDDEN2`             | 64    | neuronas capa 2             |
+| `HIDDEN3`             | 32    | neuronas capa 3             |
+| `NUM_CLASSES`         | 3     | salidas de la red           |
+
+## Protocolo UCSP (resumen)
+
+- Datagramas de **exactamente 500 bytes** (`UCSP_DATAGRAM_SIZE`)
+- **CRC32** para detectar corrupción
+- **ACK / NACK / Timeout** (stop-and-wait, RDT 3.0)
+- **Network Byte Order** (htons/htonl) para compatibilidad entre máquinas
+- Timeout: 5000 ms, máx. 5 reintentos antes de marcar el worker como fallido
 
 ---
-
-## Cómo correr el proyecto (4 terminales en una PC)
-
-```bash
-# Terminal 1 — Worker en puerto 9001
-./worker 9001
-
-# Terminal 2 — Worker en puerto 9002
-./worker 9002
-
-# Terminal 3 — Worker en puerto 9003
-./worker 9003
-
-# Terminal 4 — Main + Python
-python distributed_trainer.py
-```
-
-## Cómo compilar
-
-```bash
-# Compilar worker
-g++ -o worker worker.cpp ucsp.cpp -lz
-
-# Compilar main server
-g++ -o main_server main_server.cpp ucsp.cpp -lz
-
-# Compilar bindings para Python
-python setup.py build_ext --inplace
-```
