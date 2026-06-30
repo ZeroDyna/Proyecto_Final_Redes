@@ -6,8 +6,15 @@
 #include <cstdlib>
 #include <cstring>
 
+//simulacion timeout
+#include <thread>
+#include<chrono>
+
+
 using namespace std;
 
+//Simulación timeout para el worker 9003
+//int WORKER_PORT = 0;
 
 //funcion de activacion
 float relu(float x) {
@@ -46,6 +53,14 @@ void softmax(const vector<float>& logits, vector<float>& probs) {
 //Funcion que se ejecuta cuando el servidor manda datos al worker
 void mi_callback(float* buffer, size_t n, float* result_out) {
     cout << "[WORKER] Buffer recibido con " << n << " floats" << endl;
+
+    // Simulación de timeout
+    /*
+    if (WORKER_PORT == 9003) {
+        cout << "[WORKER] Simulando timeout solo en worker 9003..." << endl;
+        this_thread::sleep_for(chrono::seconds(10));
+    }*/
+
 
     //Desempaqueta los datos
     float* w1 = buffer + OFFSET_W1;
@@ -242,6 +257,9 @@ int main(int argc, char* argv[]) {
     }
 
     int port = atoi(argv[1]);
+    //worker conn timeout 
+    //WORKER_PORT = port;
+
     int batch_samples = atoi(argv[2]);
 
     size_t elementos_batch = batch_samples * (INPUT_DIM + NUM_CLASSES);
