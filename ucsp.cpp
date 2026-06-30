@@ -78,7 +78,6 @@ static int send_fragments(int sock, const uint8_t* data, size_t total_bytes,
     for (uint16_t i = 0; i < total_frags; i++) {
 
         size_t offset     = (size_t)i * UCSP_MAX_PAYLOAD;
-
         size_t chunk_size = (offset + UCSP_MAX_PAYLOAD <= total_bytes)
                             ? UCSP_MAX_PAYLOAD
                             : (total_bytes - offset);
@@ -91,6 +90,31 @@ static int send_fragments(int sock, const uint8_t* data, size_t total_bytes,
             ucsp_make_datagram(&dg, UCSP_TYPE_DATA, i, session_id,
                                total_frags, i,
                                data + offset, (uint16_t)chunk_size);
+
+            /*
+            // print solo el primero y el último
+            if (i == 0 || i == total_frags - 1) {
+                printf("WRITE:>>>");
+                printf("[%04X]",  ntohs(dg.magic));
+                printf("[%02X]",  dg.type);
+                printf("[%08X]",  ntohl(dg.seq_num));
+                printf("[%04X]",  ntohs(dg.total_frags));
+                printf("[%04X]",  ntohs(dg.frag_index));
+                printf("[%04X]",  ntohs(dg.session_id));
+                printf("[%04X]",  ntohs(dg.payload_len));
+                printf("[%08X]",  ntohl(dg.crc32));
+                printf("[%04X]",  (dg.reserved[0] << 8) | dg.reserved[1]);
+                printf("[");
+                for (int b = 0; b < 16; b++) {
+                    printf("%02X", dg.payload[b]);
+                }
+                printf("...");
+                for (int b = UCSP_MAX_PAYLOAD - 8; b < UCSP_MAX_PAYLOAD; b++) {
+                    printf("%02X", dg.payload[b]);
+                }
+                printf("]<<<\n");
+            }
+            *///////////////////////////////////////
 
             sendto(sock, &dg, UCSP_DATAGRAM_SIZE, 0,
                    (struct sockaddr*)dest, dest_len);
@@ -168,6 +192,31 @@ static int recv_fragments(int sock, uint8_t* out_buf, size_t total_bytes,
         if (dg.type != UCSP_TYPE_DATA) continue;
 
         if (ntohs(dg.frag_index) != expected) continue;
+
+        /*
+        // print solo el primero y el último 
+        if (expected == 0 || expected == total_frags - 1) {
+            printf("READ:>>>");
+            printf("[%04X]",  ntohs(dg.magic));
+            printf("[%02X]",  dg.type);
+            printf("[%08X]",  ntohl(dg.seq_num));
+            printf("[%04X]",  ntohs(dg.total_frags));
+            printf("[%04X]",  ntohs(dg.frag_index));
+            printf("[%04X]",  ntohs(dg.session_id));
+            printf("[%04X]",  ntohs(dg.payload_len));
+            printf("[%08X]",  ntohl(dg.crc32));
+            printf("[%04X]",  (dg.reserved[0] << 8) | dg.reserved[1]);
+            printf("[");
+            for (int b = 0; b < 16; b++) {
+                printf("%02X", dg.payload[b]);
+            }
+            printf("...");
+            for (int b = UCSP_MAX_PAYLOAD - 8; b < UCSP_MAX_PAYLOAD; b++) {
+                printf("%02X", dg.payload[b]);
+            }
+            printf("]<<<\n");
+        }
+            *//////////////////////////////////////////
 
         size_t offset = (size_t)expected * UCSP_MAX_PAYLOAD;
 

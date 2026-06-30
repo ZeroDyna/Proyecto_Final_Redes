@@ -119,7 +119,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 ### CANTIDAD DE EPOCAS
-epochs = 360
+epochs = 1
 ###
 
 true = []
