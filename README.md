@@ -100,31 +100,6 @@ El segundo argumento de `./worker` (`16`) es `SAMPLES_PER_WORKER` y debe coincid
 con el valor de `S` definido en `distributed_trainer.py`.
 
 ---
-
-## ¿Se pueden agregar más workers?
-
-Sí. La cantidad de workers no está hardcodeada en el protocolo — `ucsp_distribute`
-recibe `n_workers` como parámetro y todo se ajusta solo. Lo único que define que
-sean 4 hoy es esta lista en `distributed_trainer.py`:
-
-```python
-WORKERS = [
-    ("127.0.0.1", 9001),
-    ("127.0.0.1", 9002),
-    ("127.0.0.1", 9003),
-    ("127.0.0.1", 9004),
-]
-```
-
-Para agregar un worker más:
-
-1. Sumá una tupla a `WORKERS`, ej. `("127.0.0.1", 9005)`.
-2. Levantá una terminal extra: `./worker 9005 16`.
-
-`N = len(WORKERS)` y `batchsize = (N + 1) * S` se recalculan automáticamente.
-
----
-
 ## Constantes de la red (`nn_config.hpp`)
 
 | Constante            | Valor | Descripción                |
